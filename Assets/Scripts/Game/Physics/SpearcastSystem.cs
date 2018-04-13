@@ -51,14 +51,14 @@ namespace Ricochet.Physics
             {
                 public float distanceToTarget;
 
-                public Entity hitEntity;
+                public int hitEntityIndex;
                 public float2 hitPoint;
                 public int hitBoxSideIndex;
 
                 public void SetDefaults()
                 {
                     this.distanceToTarget = Mathf.Infinity;
-                    this.hitEntity = Entity.Null;
+                    this.hitEntityIndex = -1;
                     this.hitPoint = default (float2);
                     this.hitBoxSideIndex = -1;
                 }
@@ -76,36 +76,37 @@ namespace Ricochet.Physics
                 float2 rightPoint = center + this.SpearcastData[index].Offset.xy;
 
                 float2 heading = this.SpearcasterHeading[index].Value;
+                float2 reciprocalHeading = math.rcp(heading); // TODO: Check if this handles heading of 0 correctly!
 
                 HitInfo bestHitInfo = default(HitInfo);
                 bestHitInfo.SetDefaults ();
-
-                HitInfo tempHitInfo = default (HitInfo);
-                bestHitInfo.SetDefaults ();
+                
+                HitInfo tempHitInfo;
 
                 while (remainingDistance > 0f)
                 {
-                    if (this.Raycast (leftPoint, heading, out bestHitInfo) && tempHitInfo.distanceToTarget < bestHitInfo.distanceToTarget)
+                    if (this.RaycastAllCollidables (leftPoint, reciprocalHeading, out tempHitInfo) && tempHitInfo.distanceToTarget < bestHitInfo.distanceToTarget)
                     {
                         bestHitInfo = tempHitInfo;
                     }
-                    if (this.Raycast (frontPoint, heading, out bestHitInfo) && tempHitInfo.distanceToTarget < bestHitInfo.distanceToTarget)
+                    if (this.RaycastAllCollidables (frontPoint, reciprocalHeading, out tempHitInfo) && tempHitInfo.distanceToTarget < bestHitInfo.distanceToTarget)
                     {
                         bestHitInfo = tempHitInfo;
                     }
-                    if (this.Raycast (rightPoint, heading, out bestHitInfo) && tempHitInfo.distanceToTarget < bestHitInfo.distanceToTarget)
+                    if (this.RaycastAllCollidables (rightPoint, reciprocalHeading, out tempHitInfo) && tempHitInfo.distanceToTarget < bestHitInfo.distanceToTarget)
                     {
                         bestHitInfo = tempHitInfo;
                     }
 
                     float2 directionToMove = heading;
                     float distanceToMove = remainingDistance;
-                    if (bestHitInfo.distanceToTarget <= remainingDistance && bestHitInfo.hitEntity != Entity.Null) // We hit something!
+                    if (bestHitInfo.distanceToTarget <= remainingDistance && bestHitInfo.hitEntityIndex >= 0) // We hit something!
                     {
                         distanceToMove = bestHitInfo.distanceToTarget;
 
-                        float2 normal = this.CalculateNormal (bestHitInfo.hitEntity, bestHitInfo.hitPoint, bestHitInfo.hitBoxSideIndex, center);
-                        heading = this.ReflectHeadingOnNormal (heading, normal);
+                        float2 normal = this.CalculateNormal (bestHitInfo, center);
+                        heading = math.reflect (heading, normal);
+                        reciprocalHeading = math.rcp(heading);
                     }
 
                     position.Value = position.Value + distanceToMove * directionToMove;
@@ -115,20 +116,61 @@ namespace Ricochet.Physics
                 }
             }
 
-            bool Raycast(float2 position, float2 heading, out HitInfo hitInfo)
+            bool RaycastAllCollidables(float2 rayOrigin, float2 reciprocalHeading, out HitInfo hitInfo)
             {
                 hitInfo = default (HitInfo);
                 hitInfo.SetDefaults ();
 
+                float minDistance = Mathf.Infinity;
+                
+                float tempDistance;
+
                 for (int i = 0; i < this.Collidable.Length; i++)
                 {
-                    // TODO: Implement ray-AABB-intersection algorithm, e.g. https://gamedev.stackexchange.com/questions/18436/most-efficient-aabb-vs-ray-collision-algorithms
+                    if (this.RaycastCollidable(i, rayOrigin, reciprocalHeading, out tempDistance))
+                    {
+                        if (tempDistance < minDistance)
+                        {
+                            minDistance = tempDistance;
+                            
+                            hitInfo.distanceToTarget = minDistance;
+                        }
+                    }
                 }
 
-                return false;
+                hitInfo.hitPoint = rayOrigin + hitInfo.distanceToTarget / reciprocalHeading;
+
+                return hitInfo.hitEntityIndex >= 0;
             }
 
-            float2 CalculateNormal(Entity hitEntity, float2 hitPoint, int hitBoxSideIndex, float2 center)
+            bool RaycastCollidable(int index, float2 rayOrigin, float2 reciprocalHeading, out float distance)
+            {
+                // TODO: Determine which side the ray hit!
+                
+                // Implementation from: https://tavianator.com/fast-branchless-raybounding-box-intersections-part-2-nans/
+                float2 offset = new float2(this.Collidable[index].Scale, this.Collidable[index].Scale);
+                float2 lowerLeft = this.CollidablePosition[index].Value - offset;
+                float2 upperRight = this.CollidablePosition[index].Value + offset;
+                
+                float left = (lowerLeft.x - rayOrigin.x) * reciprocalHeading.x;
+                float right = (upperRight.x - rayOrigin.x) * reciprocalHeading.x;
+
+                float tMin = math.min(left, right);
+                float tMax = math.max(left, right);
+                
+                float bottom = (lowerLeft.y - rayOrigin.y) * reciprocalHeading.y;
+                float top = (upperRight.y - rayOrigin.y) * reciprocalHeading.y;
+                
+                // Extra min/max for NaN handling!
+                tMin = math.max(tMin, math.min(math.min(bottom, top), tMax));
+                tMax = math.min(tMax, math.max(math.max(bottom, top), tMin));
+
+                distance = tMin;
+
+                return tMax > math.max(tMin, 0f);
+            }
+
+            float2 CalculateNormal(HitInfo hitInfo, float2 center)
             {
                 // TODO: If hitEntity has a RoundedCornerData and the hit point is within RoundedCornerThreshold, use a sphere normal,
                 // i.e. draw a vector from the center to the hit point and use that as a normal.
@@ -136,11 +178,6 @@ namespace Ricochet.Physics
                 // TODO: Otherwise, determine the normal based on the box side index, i.e. normal for a collision with the bottom side is (0, -1).
 
                 return default (float2);
-            }
-
-            float2 ReflectHeadingOnNormal(float2 heading, float2 normal)
-            {
-                return heading - 2 * normal * math.dot (normal, heading);
             }
         }
 
