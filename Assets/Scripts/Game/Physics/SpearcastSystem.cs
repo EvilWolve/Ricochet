@@ -27,23 +27,60 @@ namespace Ricochet.Physics
         {
             public int Length;
 
+            [ReadOnly] public EntityArray Entities;
             [ReadOnly] public SharedComponentDataArray<Collidable> Collidable;
             [ReadOnly] public ComponentDataArray<Position2D> Position;
         }
 
         [Inject] CollisionTargets collisionTargets;
+        
+        [Inject] ComponentDataFromEntity<RoundedCornerData> roundedCorners;
+
+        protected override JobHandle OnUpdate(JobHandle inputDeps)
+        {
+            // TODO: This should instead be either injected at startup or loaded from a config file or other system every frame
+            // For now, we also assume that all moving objects move at the same speed, if that changes, add a Movable-component that defines speed.
+            const float SPEED = 1f;
+
+            float distance = Time.deltaTime * SPEED;
+            float[] distances = new float[this.spearcasters.Length];
+            for (int i = 0; i < distances.Length; i++)
+            {
+                distances[i] = distance;
+            }
+
+            const float ROUNDED_CORNER_THRESHOLD = 0.1f; // TODO: Load this from some config instead
+
+            var collisionJob = new CollisionJob
+            {
+                Distance = new NativeArray<float> (distances, Allocator.Temp),
+                RoundedCorners = this.roundedCorners,
+                SquaredRoundedCornerThreshold = ROUNDED_CORNER_THRESHOLD * ROUNDED_CORNER_THRESHOLD,
+                SpearcastData = this.spearcasters.SpearcastData,
+                SpearcasterPosition = this.spearcasters.Position,
+                SpearcasterHeading = this.spearcasters.Heading,
+                CollidableEntities = this.collisionTargets.Entities,
+                Collidable = this.collisionTargets.Collidable,
+                CollidablePosition = this.collisionTargets.Position,
+            }.Schedule (this.spearcasters.Length, 1, inputDeps);
+
+            return collisionJob;
+        }
 
         [ComputeJobOptimization]
         struct CollisionJob : IJobParallelFor
         {
-            [ReadOnly] public float RoundedCornerThreshold;
+            [ReadOnly] public float SquaredRoundedCornerThreshold;
 
             public NativeArray<float> Distance;
+            
+            public ComponentDataFromEntity<RoundedCornerData> RoundedCorners;
 
             [ReadOnly] public SharedComponentDataArray<SpearcastData> SpearcastData;
             public ComponentDataArray<Position2D> SpearcasterPosition;
             public ComponentDataArray<Heading2D> SpearcasterHeading;
 
+            [ReadOnly] public EntityArray CollidableEntities;
             [ReadOnly] public SharedComponentDataArray<Collidable> Collidable;
             [ReadOnly] public ComponentDataArray<Position2D> CollidablePosition;
 
@@ -51,16 +88,14 @@ namespace Ricochet.Physics
             {
                 public float distanceToTarget;
 
-                public int hitEntityIndex;
+                public Entity hitEntity;
                 public float2 hitPoint;
-                public int hitBoxSideIndex;
 
                 public void SetDefaults()
                 {
                     this.distanceToTarget = Mathf.Infinity;
-                    this.hitEntityIndex = -1;
+                    this.hitEntity = Entity.Null;
                     this.hitPoint = default (float2);
-                    this.hitBoxSideIndex = -1;
                 }
             }
 
@@ -100,11 +135,11 @@ namespace Ricochet.Physics
 
                     float2 directionToMove = heading;
                     float distanceToMove = remainingDistance;
-                    if (bestHitInfo.distanceToTarget <= remainingDistance && bestHitInfo.hitEntityIndex >= 0) // We hit something!
+                    if (bestHitInfo.distanceToTarget <= remainingDistance && bestHitInfo.hitEntity != Entity.Null) // We hit something!
                     {
                         distanceToMove = bestHitInfo.distanceToTarget;
 
-                        float2 normal = this.CalculateNormal (bestHitInfo, center);
+                        float2 normal = this.CalculateNormal (index, bestHitInfo, center);
                         heading = math.reflect (heading, normal);
                         reciprocalHeading = math.rcp(heading);
                     }
@@ -134,19 +169,18 @@ namespace Ricochet.Physics
                             minDistance = tempDistance;
                             
                             hitInfo.distanceToTarget = minDistance;
+                            hitInfo.hitEntity = this.CollidableEntities[i];
                         }
                     }
                 }
 
                 hitInfo.hitPoint = rayOrigin + hitInfo.distanceToTarget / reciprocalHeading;
 
-                return hitInfo.hitEntityIndex >= 0;
+                return hitInfo.hitEntity != Entity.Null;
             }
 
             bool RaycastCollidable(int index, float2 rayOrigin, float2 reciprocalHeading, out float distance)
             {
-                // TODO: Determine which side the ray hit!
-                
                 // Implementation from: https://tavianator.com/fast-branchless-raybounding-box-intersections-part-2-nans/
                 float2 offset = new float2(this.Collidable[index].Scale, this.Collidable[index].Scale);
                 float2 lowerLeft = this.CollidablePosition[index].Value - offset;
@@ -170,44 +204,37 @@ namespace Ricochet.Physics
                 return tMax > math.max(tMin, 0f);
             }
 
-            float2 CalculateNormal(HitInfo hitInfo, float2 center)
+            float2 CalculateNormal(int index, HitInfo hitInfo, float2 center)
             {
-                // TODO: If hitEntity has a RoundedCornerData and the hit point is within RoundedCornerThreshold, use a sphere normal,
-                // i.e. draw a vector from the center to the hit point and use that as a normal.
-
-                // TODO: Otherwise, determine the normal based on the box side index, i.e. normal for a collision with the bottom side is (0, -1).
-
-                return default (float2);
-            }
-        }
-
-        protected override JobHandle OnUpdate(JobHandle inputDeps)
-        {
-            // TODO: This should instead be either injected at startup or loaded from a config file or other system every frame
-            // For now, we also assume that all moving objects move at the same speed, if that changes, add a Movable-component that defines speed.
-            const float SPEED = 1f;
-
-            float distance = Time.deltaTime * SPEED;
-            float[] distances = new float[this.spearcasters.Length];
-            for (int i = 0; i < distances.Length; i++)
-            {
-                distances[i] = distance;
+                float2 direction = hitInfo.hitPoint - center;
+                if (this.IsHitPointOnRoundedCorner(index, hitInfo, center))
+                {
+                    return math.normalize(direction);
+                }
+                else
+                {
+                    return math.select(new float2(1, 0) * math.sign(direction.x), new float2(0, 1) * math.sign(direction.y),
+                        math.abs(direction.x) >= math.abs(direction.y));
+                }
             }
 
-            const float ROUNDED_CORNER_THRESHOLD = 0.1f; // TODO: Load this from some config instead
-
-            var collisionJob = new CollisionJob
+            bool IsHitPointOnRoundedCorner(int index, HitInfo hitInfo, float2 center)
             {
-                Distance = new NativeArray<float> (distances, Allocator.Temp),
-                RoundedCornerThreshold = ROUNDED_CORNER_THRESHOLD,
-                SpearcastData = this.spearcasters.SpearcastData,
-                SpearcasterPosition = this.spearcasters.Position,
-                SpearcasterHeading = this.spearcasters.Heading,
-                Collidable = this.collisionTargets.Collidable,
-                CollidablePosition = this.collisionTargets.Position,
-            }.Schedule (this.spearcasters.Length, 1, inputDeps);
+                if (!this.RoundedCorners.Exists(hitInfo.hitEntity))
+                    return false;
 
-            return collisionJob;
+                RoundedCornerData roundedCornerData = this.RoundedCorners[hitInfo.hitEntity];
+                float scale = this.Collidable[index].Scale;
+
+                for (int i = 0; i < roundedCornerData.Corners.Length; i++)
+                {
+                    float2 corner = new float2(center.x + ((i / 2 == 0) ? -scale : scale), center.y + ((i % 3 == 0) ? -scale : scale));
+                    if (math.lengthSquared(corner - hitInfo.hitPoint) <= this.SquaredRoundedCornerThreshold)
+                        return true;
+                }
+
+                return false;
+            }
         }
     }
 }
