@@ -3,7 +3,8 @@ using Unity.Mathematics;
 
 namespace Ricochet.Physics
 {
-    public struct SpearcastData : IComponentData
+    // This should not change after it is initially set, and will be the same for the majority of projectiles
+    public struct SpearcastData : ISharedComponentData
     {
         // I assume that using a float3 for storage is more efficient than using a float and float2.
 

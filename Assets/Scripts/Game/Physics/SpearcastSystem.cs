@@ -15,7 +15,7 @@ namespace Ricochet.Physics
         {
             public int Length;
 
-            [ReadOnly] public ComponentDataArray<SpearcastData> SpearcastData;
+            [ReadOnly] public SharedComponentDataArray<SpearcastData> SpearcastData;
 
             public ComponentDataArray<Position2D> Position;
             public ComponentDataArray<Heading2D> Heading;
@@ -27,7 +27,7 @@ namespace Ricochet.Physics
         {
             public int Length;
 
-            [ReadOnly] public ComponentDataArray<Collidable> Collidable;
+            [ReadOnly] public SharedComponentDataArray<Collidable> Collidable;
             [ReadOnly] public ComponentDataArray<Position2D> Position;
         }
 
@@ -40,11 +40,11 @@ namespace Ricochet.Physics
 
             public NativeArray<float> Distance;
 
-            [ReadOnly] public ComponentDataArray<SpearcastData> SpearcastData;
+            [ReadOnly] public SharedComponentDataArray<SpearcastData> SpearcastData;
             public ComponentDataArray<Position2D> SpearcasterPosition;
             public ComponentDataArray<Heading2D> SpearcasterHeading;
 
-            [ReadOnly] public ComponentDataArray<Collidable> Collidable;
+            [ReadOnly] public SharedComponentDataArray<Collidable> Collidable;
             [ReadOnly] public ComponentDataArray<Position2D> CollidablePosition;
 
             struct HitInfo
