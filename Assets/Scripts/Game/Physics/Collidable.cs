@@ -3,7 +3,8 @@
 namespace Ricochet.Physics
 {
     // The scale of a collidable shouldn't change after its initialisation, and the majority of collidables will have the same scale.
-    public struct Collidable : ISharedComponentData
+    // TODO: Make this ISharedComponentData again once you figure out why it didn't work!
+    public struct Collidable : IComponentData
     {
         /// <summary>
         /// For simplicity, collidables are assumed to always be square.

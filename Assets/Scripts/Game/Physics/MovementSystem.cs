@@ -1,4 +1,6 @@
-﻿using Unity.Entities;
+﻿using Ricochet.Configuration;
+
+using Unity.Entities;
 using Unity.Jobs;
 using Unity.Collections;
 using Unity.Transforms2D;
@@ -9,13 +11,13 @@ using Unity.Mathematics;
 namespace Ricochet.Physics
 {
     // TODO: Add UpdateBefore(HandleDamageSystem)
-    public class SpearcastSystem : JobComponentSystem
+    public class MovementSystem : JobComponentSystem
     {
         struct Spearcasters
         {
             public int Length;
 
-            [ReadOnly] public SharedComponentDataArray<SpearcastData> SpearcastData;
+            [ReadOnly] public ComponentDataArray<SpearcastData> SpearcastData;
 
             public ComponentDataArray<Position2D> Position;
             public ComponentDataArray<Heading2D> Heading;
@@ -28,7 +30,7 @@ namespace Ricochet.Physics
             public int Length;
 
             [ReadOnly] public EntityArray Entities;
-            [ReadOnly] public SharedComponentDataArray<Collidable> Collidable;
+            [ReadOnly] public ComponentDataArray<Collidable> Collidable;
             [ReadOnly] public ComponentDataArray<Position2D> Position;
         }
 
@@ -36,26 +38,29 @@ namespace Ricochet.Physics
         
         [Inject] ComponentDataFromEntity<RoundedCornerData> roundedCorners;
 
+        BoardConfig boardConfig;
+
+        protected override void OnCreateManager(int capacity)
+        {
+            this.boardConfig = Resources.Load<BoardConfig>("Data/Board Configuration");
+        }
+
         protected override JobHandle OnUpdate(JobHandle inputDeps)
         {
-            // TODO: This should instead be either injected at startup or loaded from a config file or other system every frame
-            // For now, we also assume that all moving objects move at the same speed, if that changes, add a Movable-component that defines speed.
-            const float SPEED = 1f;
-
-            float distance = Time.deltaTime * SPEED;
+            float distance = Time.deltaTime * this.boardConfig.BulletSpeed;
             float[] distances = new float[this.spearcasters.Length];
             for (int i = 0; i < distances.Length; i++)
             {
                 distances[i] = distance;
             }
 
-            const float ROUNDED_CORNER_THRESHOLD = 0.1f; // TODO: Load this from some config instead
+            NativeArray<float> distanceArray = new NativeArray<float>(distances, Allocator.TempJob);
 
             var collisionJob = new CollisionJob
             {
-                Distance = new NativeArray<float> (distances, Allocator.Temp),
+                Distance = distanceArray,
                 RoundedCorners = this.roundedCorners,
-                SquaredRoundedCornerThreshold = ROUNDED_CORNER_THRESHOLD * ROUNDED_CORNER_THRESHOLD,
+                SquaredRoundedCornerThreshold = this.boardConfig.RoundedCornerThreshold * this.boardConfig.RoundedCornerThreshold,
                 SpearcastData = this.spearcasters.SpearcastData,
                 SpearcasterPosition = this.spearcasters.Position,
                 SpearcasterHeading = this.spearcasters.Heading,
@@ -63,6 +68,8 @@ namespace Ricochet.Physics
                 Collidable = this.collisionTargets.Collidable,
                 CollidablePosition = this.collisionTargets.Position,
             }.Schedule (this.spearcasters.Length, 1, inputDeps);
+            
+            distanceArray.Dispose();
 
             return collisionJob;
         }
@@ -74,14 +81,15 @@ namespace Ricochet.Physics
 
             public NativeArray<float> Distance;
             
+            [ReadOnly]
             public ComponentDataFromEntity<RoundedCornerData> RoundedCorners;
 
-            [ReadOnly] public SharedComponentDataArray<SpearcastData> SpearcastData;
+            [ReadOnly] public ComponentDataArray<SpearcastData> SpearcastData;
             public ComponentDataArray<Position2D> SpearcasterPosition;
             public ComponentDataArray<Heading2D> SpearcasterHeading;
 
             [ReadOnly] public EntityArray CollidableEntities;
-            [ReadOnly] public SharedComponentDataArray<Collidable> Collidable;
+            [ReadOnly] public ComponentDataArray<Collidable> Collidable;
             [ReadOnly] public ComponentDataArray<Position2D> CollidablePosition;
 
             struct HitInfo
@@ -182,7 +190,8 @@ namespace Ricochet.Physics
             bool RaycastCollidable(int index, float2 rayOrigin, float2 reciprocalHeading, out float distance)
             {
                 // Implementation from: https://tavianator.com/fast-branchless-raybounding-box-intersections-part-2-nans/
-                float2 offset = new float2(this.Collidable[index].Scale, this.Collidable[index].Scale);
+                float halfScale = this.Collidable[index].Scale / 2f;
+                float2 offset = new float2(halfScale, halfScale);
                 float2 lowerLeft = this.CollidablePosition[index].Value - offset;
                 float2 upperRight = this.CollidablePosition[index].Value + offset;
                 
@@ -224,13 +233,28 @@ namespace Ricochet.Physics
                     return false;
 
                 RoundedCornerData roundedCornerData = this.RoundedCorners[hitInfo.hitEntity];
-                float scale = this.Collidable[index].Scale;
-
-                for (int i = 0; i < roundedCornerData.Corners.Length; i++)
+                float halfScale = this.Collidable[index].Scale / 2f;
+                
+                for (int i = 0; i < 4; i++)
                 {
-                    float2 corner = new float2(center.x + ((i / 2 == 0) ? -scale : scale), center.y + ((i % 3 == 0) ? -scale : scale));
-                    if (math.lengthSquared(corner - hitInfo.hitPoint) <= this.SquaredRoundedCornerThreshold)
-                        return true;
+                    bool flag = false;
+                    if (index == 0)
+                        flag = roundedCornerData.Corners.x;
+                    if (index == 1)
+                        flag = roundedCornerData.Corners.y;
+                    if (index == 2)
+                        flag = roundedCornerData.Corners.z;
+                    if (index == 3)
+                        flag = roundedCornerData.Corners.w;
+                    
+                    // TODO: Add this again once you figure out why it's not working. Burst compiler claims the parameter doesn't match the method signature but that's clearly not the case.
+                    //if (roundedCornerData.Corners.GetAtIndex(i))
+                    if (flag)
+                    {
+                        float2 corner = new float2(center.x + ((i / 2 == 0) ? -halfScale : halfScale), center.y + ((i % 3 == 0) ? -halfScale : halfScale));
+                        if (math.lengthSquared(corner - hitInfo.hitPoint) <= this.SquaredRoundedCornerThreshold)
+                            return true;
+                    }
                 }
 
                 return false;

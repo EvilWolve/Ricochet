@@ -9,6 +9,6 @@ namespace Ricochet.Physics
         /// Contains flags for each corner, starting bottom-right and then going clockwise.
         /// If a flag is true, the corner is rounded. Corners are not rounded if another collidable is adjacent to this corner.
         /// </summary>
-        public bool[] Corners;
+        public bool4 Corners;
     }
 }
