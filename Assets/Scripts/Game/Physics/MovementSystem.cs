@@ -235,29 +235,11 @@ namespace Ricochet.Physics
                 RoundedCornerData roundedCornerData = this.RoundedCorners[hitInfo.hitEntity];
                 float halfScale = this.Collidable[index].Scale / 2f;
                 
-                for (int i = 0; i < 4; i++)
-                {
-                    bool flag = false;
-                    if (index == 0)
-                        flag = roundedCornerData.Corners.x;
-                    if (index == 1)
-                        flag = roundedCornerData.Corners.y;
-                    if (index == 2)
-                        flag = roundedCornerData.Corners.z;
-                    if (index == 3)
-                        flag = roundedCornerData.Corners.w;
-                    
-                    // TODO: Add this again once you figure out why it's not working. Burst compiler claims the parameter doesn't match the method signature but that's clearly not the case.
-                    //if (roundedCornerData.Corners.GetAtIndex(i))
-                    if (flag)
-                    {
-                        float2 corner = new float2(center.x + ((i / 2 == 0) ? -halfScale : halfScale), center.y + ((i % 3 == 0) ? -halfScale : halfScale));
-                        if (math.lengthSquared(corner - hitInfo.hitPoint) <= this.SquaredRoundedCornerThreshold)
-                            return true;
-                    }
-                }
-
-                return false;
+                // Since this is hot code, don't do elegant for-loops and array index access, just unroll the loop and get better performance
+                return (roundedCornerData.Corners.x && math.lengthSquared(new float2(center.x - halfScale, center.y - halfScale) - hitInfo.hitPoint) <= this.SquaredRoundedCornerThreshold)
+                       || (roundedCornerData.Corners.y && math.lengthSquared(new float2(center.x - halfScale, center.y + halfScale) - hitInfo.hitPoint) <= this.SquaredRoundedCornerThreshold)
+                       || (roundedCornerData.Corners.z && math.lengthSquared(new float2(center.x + halfScale, center.y + halfScale) - hitInfo.hitPoint) <= this.SquaredRoundedCornerThreshold)
+                       || (roundedCornerData.Corners.w &&  math.lengthSquared(new float2(center.x + halfScale, center.y - halfScale) - hitInfo.hitPoint) <= this.SquaredRoundedCornerThreshold);
             }
         }
     }
